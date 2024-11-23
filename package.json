@@ -3,6 +3,12 @@
   "displayName": "RestfulTool",
   "description": "REST API Explorer for VSCode",
   "version": "0.0.1",
+  "publisher": "feifeizhao",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/feifeizhao/restfultool"
+  },
   "engines": {
     "vscode": "^1.95.0"
   },

@@ -1,71 +1,87 @@
-# restfultool README
+# Restful Tool - VSCode REST API 可视化工具
 
-This is the README for your extension "restfultool". After writing up a brief description, we recommend including the following sections.
+一个强大的 VSCode 扩展，用于可视化和管理多框架的 REST API 端点。
 
-## Features
+## 功能特性
 
-Describe specific features of your extension including screenshots of your extension in action. Image paths are relative to this README file.
+- 🔍 自动扫描并识别多种框架的 API 端点
+- 📝 支持的框架：
+  - Java: Spring Boot, JAX-RS
+  - Go: Gin, Echo
+  - Python: FastAPI, Flask
+- 🌲 树形结构展示所有 API 端点
+- 🔎 快速搜索和过滤功能（快捷键：`Ctrl+Alt+\`）
+- 🎨 HTTP 方法的彩色图标标识
+- ⚡ 实时自动更新
+- 🔗 快速跳转到端点定义
 
-For example if there is an image subfolder under your extension project workspace:
+## 使用指南
 
-\!\[feature X\]\(images/feature-x.png\)
+1. 安装扩展后，在 VSCode 左侧活动栏会出现 Restful Tool 图标
+2. 点击图标打开 API 端点树视图
+3. 自动扫描当前工作区的所有支持的框架文件
+4. 使用顶部工具栏进行以下操作：
+   - 🔍 搜索：快速查找端点（Ctrl+Alt+\）
+   - 🔄 刷新：手动更新端点列表
+   - ❌ 清除：清除搜索结果
 
-> Tip: Many popular extensions utilize animations. This is an excellent way to show off your extension! We recommend short, focused animations that are easy to follow.
+## 搜索功能
 
-## Requirements
+- 支持多个字段搜索：
+  - API 路径
+  - HTTP 方法
+  - 类名和方法名
+  - 框架名称
+- 实时过滤和匹配
+- 支持部分匹配和大小写不敏感
 
-If you have any requirements or dependencies, add a section describing those and how to install and configure them.
+## 框架支持
 
-## Extension Settings
+### Java
+- Spring Boot
+  - @Controller/@RestController
+  - @RequestMapping
+  - @GetMapping/@PostMapping 等
+- JAX-RS
+  - @Path
+  - @GET/@POST 等
 
-Include if your extension adds any VS Code settings through the `contributes.configuration` extension point.
+### Go
+- Gin
+  - router.GET/POST 等
+- Echo
+  - e.GET/POST 等
 
-For example:
+### Python
+- FastAPI
+  - @app.get/post 等
+- Flask
+  - @app.route
 
-This extension contributes the following settings:
+## 贡献指南
 
-* `myExtension.enable`: Enable/disable this extension.
-* `myExtension.thing`: Set to `blah` to do something.
+欢迎提交 Issue 和 Pull Request！
 
-## Known Issues
+## 开源许可
 
-Calling out known issues can help limit users opening duplicate issues against your extension.
+MIT License
 
-## Release Notes
+Copyright (c) 2024 Feifei Zhao
 
-Users appreciate release notes as you update your extension.
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
 
-### 1.0.0
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
 
-Initial release of ...
-
-### 1.0.1
-
-Fixed issue #.
-
-### 1.1.0
-
-Added features X, Y, and Z.
-
----
-
-## Following extension guidelines
-
-Ensure that you've read through the extensions guidelines and follow the best practices for creating your extension.
-
-* [Extension Guidelines](https://code.visualstudio.com/api/references/extension-guidelines)
-
-## Working with Markdown
-
-You can author your README using Visual Studio Code. Here are some useful editor keyboard shortcuts:
-
-* Split the editor (`Cmd+\` on macOS or `Ctrl+\` on Windows and Linux).
-* Toggle preview (`Shift+Cmd+V` on macOS or `Shift+Ctrl+V` on Windows and Linux).
-* Press `Ctrl+Space` (Windows, Linux, macOS) to see a list of Markdown snippets.
-
-## For more information
-
-* [Visual Studio Code's Markdown Support](http://code.visualstudio.com/docs/languages/markdown)
-* [Markdown Syntax Reference](https://help.github.com/articles/markdown-basics/)
-
-**Enjoy!**
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
