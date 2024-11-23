@@ -18,20 +18,27 @@
     "viewsContainers": {
       "activitybar": [
         {
-          "id": "restful-explorer",
-          "title": "REST API Explorer",
-          "icon": "media/api-icon.svg"
+          "id": "restful-tool",
+          "title": "Restful Tool",
+          "icon": "resources/edge-icon.svg"
         }
       ]
     },
     "views": {
-      "restful-explorer": [
+      "restful-tool": [
         {
-          "id": "restfulExplorer",
-          "name": "API Endpoints"
+          "id": "restful-tool-view",
+          "name": "Restful Tool",
+          "type": "tree"
         }
       ]
     },
+    "viewsWelcome": [
+      {
+        "view": "restful-tool-view",
+        "contents": "No API endpoints found."
+      }
+    ],
     "commands": [
       {
         "command": "restfultool.refreshEndpoints",
@@ -42,8 +49,22 @@
         "command": "restfultool.searchEndpoints",
         "title": "Search API Endpoints",
         "icon": "$(search)"
+      },
+      {
+        "command": "restful-tool.search",
+        "title": "Search API Endpoints",
+        "icon": "$(search)"
       }
-    ]
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "restful-tool.search",
+          "when": "view == restful-tool-view",
+          "group": "navigation"
+        }
+      ]
+    }
   },
   "scripts": {
     "vscode:prepublish": "pnpm run package",

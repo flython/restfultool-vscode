@@ -24,9 +24,9 @@ class ApiTreeDataProvider implements vscode.TreeDataProvider<ApiEndpoint> {
     private searchText: string = '';  // 搜索文本
 
     // 刷新树视图
-    refresh(): void {
+    async refresh(): Promise<void> {
         this.endpoints = [];  // 清空端点列表
-        this.scanWorkspace();  // 重新扫描工作区
+        await this.scanWorkspace();  // 重新扫描工作区
         this.filterEndpoints();  // 应用过滤
         this._onDidChangeTreeData.fire();  // 触发树视图更新
     }
@@ -196,36 +196,34 @@ class ApiTreeDataProvider implements vscode.TreeDataProvider<ApiEndpoint> {
 export function activate(context: vscode.ExtensionContext) {
     try {
         // 创建API树数据提供者
-        const apiTreeDataProvider = new ApiTreeDataProvider();
+        const treeDataProvider = new ApiTreeDataProvider();
         
         // 创建树视图
-        const treeView = vscode.window.createTreeView('restfulExplorer', {
-            treeDataProvider: apiTreeDataProvider
+        const treeView = vscode.window.createTreeView('restful-tool-view', {
+            treeDataProvider: treeDataProvider,
+            showCollapseAll: true
         });
 
-        // 注册刷新命令
-        context.subscriptions.push(
-            vscode.commands.registerCommand('restfultool.refreshEndpoints', () => {
-                apiTreeDataProvider.refresh();
-            })
-        );
+        // 创建搜索框
+        const searchBox = vscode.window.createInputBox();
+        searchBox.placeholder = 'Search API endpoints...';
+        searchBox.onDidChangeValue(text => {
+            treeDataProvider.setSearchText(text);
+        });
 
-        // 注册搜索命令
+        // 注册视图标题菜单命令
+        const searchCommand = vscode.commands.registerCommand('restful-tool.search', () => {
+            searchBox.show();
+        });
+
         context.subscriptions.push(
-            vscode.commands.registerCommand('restfultool.searchEndpoints', async () => {
-                const searchText = await vscode.window.showInputBox({
-                    placeHolder: 'Search API endpoints...',
-                    prompt: 'Enter text to filter API endpoints'
-                });
-                
-                if (searchText !== undefined) {
-                    apiTreeDataProvider.setSearchText(searchText);
-                }
-            })
+            treeView,
+            searchBox,
+            searchCommand
         );
 
         // 初始扫描
-        apiTreeDataProvider.refresh();
+        treeDataProvider.refresh();
         
     } catch (error: any) {
         // 处理错误，但不抛出 instrumentation key 错误
