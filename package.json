@@ -28,7 +28,7 @@
       "restful-tool": [
         {
           "id": "restful-tool-view",
-          "name": "Restful Tool",
+          "name": "API Endpoints",
           "type": "tree"
         }
       ]
@@ -46,22 +46,40 @@
         "icon": "$(refresh)"
       },
       {
-        "command": "restfultool.searchEndpoints",
-        "title": "Search API Endpoints",
-        "icon": "$(search)"
+        "command": "restful-tool.clearSearch",
+        "title": "Clear Search",
+        "icon": "$(clear-all)"
       },
       {
-        "command": "restful-tool.search",
+        "command": "restful-tool.showSearch",
         "title": "Search API Endpoints",
         "icon": "$(search)"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "restful-tool.showSearch",
+        "key": "ctrl+alt+\\",
+        "mac": "ctrl+cmd+\\",
+        "when": "true"
       }
     ],
     "menus": {
       "view/title": [
         {
-          "command": "restful-tool.search",
+          "command": "restful-tool.showSearch",
           "when": "view == restful-tool-view",
-          "group": "navigation"
+          "group": "navigation@1"
+        },
+        {
+          "command": "restful-tool.clearSearch",
+          "when": "view == restful-tool-view && restful-tool.hasSearchText == true",
+          "group": "navigation@2"
+        },
+        {
+          "command": "restfultool.refreshEndpoints",
+          "when": "view == restful-tool-view",
+          "group": "navigation@3"
         }
       ]
     }

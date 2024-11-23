@@ -15,13 +15,12 @@ interface ApiEndpoint {
 
 // API树数据提供者类
 class ApiTreeDataProvider implements vscode.TreeDataProvider<ApiEndpoint> {
-    // 用于通知树视图数据变化的事件发射器
-    private _onDidChangeTreeData: vscode.EventEmitter<ApiEndpoint | undefined | null | void> = new vscode.EventEmitter<ApiEndpoint | undefined | null | void>();
-    readonly onDidChangeTreeData: vscode.Event<ApiEndpoint | undefined | null | void> = this._onDidChangeTreeData.event;
+    private _onDidChangeTreeData: vscode.EventEmitter<void> = new vscode.EventEmitter<void>();
+    readonly onDidChangeTreeData: vscode.Event<void> = this._onDidChangeTreeData.event;
 
-    private endpoints: ApiEndpoint[] = [];  // 存储所有API端点
-    private filteredEndpoints: ApiEndpoint[] = [];  // 存储过滤后的API端点
-    private searchText: string = '';  // 搜索文本
+    private endpoints: ApiEndpoint[] = [];
+    private filteredEndpoints: ApiEndpoint[] = [];
+    private searchText: string = '';
 
     // 刷新树视图
     async refresh(): Promise<void> {
@@ -29,26 +28,6 @@ class ApiTreeDataProvider implements vscode.TreeDataProvider<ApiEndpoint> {
         await this.scanWorkspace();  // 重新扫描工作区
         this.filterEndpoints();  // 应用过滤
         this._onDidChangeTreeData.fire();  // 触发树视图更新
-    }
-
-    // 设置搜索文本并更新树视图
-    setSearchText(text: string): void {
-        this.searchText = text.toLowerCase();
-        this.filterEndpoints();
-        this._onDidChangeTreeData.fire();
-    }
-
-    // 根据搜索文本过滤端点
-    private filterEndpoints(): void {
-        if (!this.searchText) {
-            this.filteredEndpoints = [...this.endpoints];
-            return;
-        }
-        this.filteredEndpoints = this.endpoints.filter(endpoint => 
-            endpoint.path.toLowerCase().includes(this.searchText) ||
-            endpoint.method.toLowerCase().includes(this.searchText) ||
-            endpoint.className.toLowerCase().includes(this.searchText)
-        );
     }
 
     // 获取树项目
@@ -69,6 +48,33 @@ class ApiTreeDataProvider implements vscode.TreeDataProvider<ApiEndpoint> {
     // 获取子项目（这里返回过滤后的端点列表）
     getChildren(): ApiEndpoint[] {
         return this.filteredEndpoints;
+    }
+
+    // 设置搜索文本并更新树视图
+    setSearchText(text: string): void {
+        this.searchText = text.toLowerCase();
+        this.filterEndpoints();
+        this._onDidChangeTreeData.fire();
+        // 更新搜索状态
+        vscode.commands.executeCommand('setContext', 'restful-tool.hasSearchText', !!this.searchText);
+    }
+
+    // 根据搜索文本过滤端点
+    private filterEndpoints(): void {
+        if (!this.searchText) {
+            this.filteredEndpoints = [...this.endpoints];
+            return;
+        }
+        this.filteredEndpoints = this.endpoints.filter(endpoint => 
+            endpoint.path.toLowerCase().includes(this.searchText) ||
+            endpoint.method.toLowerCase().includes(this.searchText) ||
+            endpoint.className.toLowerCase().includes(this.searchText)
+        );
+    }
+
+    // 获取所有端点（用于快速搜索）
+    getAllEndpoints(): ApiEndpoint[] {
+        return this.endpoints;
     }
 
     // 扫描工作区
@@ -108,6 +114,7 @@ class ApiTreeDataProvider implements vscode.TreeDataProvider<ApiEndpoint> {
         let classMapping = '';
         let isController = false;
 
+        // 首先检查类级别的注解
         for (let i = 0; i < lines.length; i++) {
             const line = lines[i].trim();
 
@@ -116,51 +123,70 @@ class ApiTreeDataProvider implements vscode.TreeDataProvider<ApiEndpoint> {
                 isController = true;
             }
 
-            // 获取类名和映射
+            // 获取类名
             if (line.includes('class ')) {
                 className = line.split('class ')[1].split(' ')[0];
+                break; // 找到类名后就可以停止这个循环
             }
 
+            // 获取类级别的RequestMapping
             if (line.includes('@RequestMapping')) {
-                const match = line.match(/"([^"]+)"/);
+                const match = line.match(/\"([^\"]+)\"/);
                 if (match) {
                     classMapping = match[1];
+                    // 确保类映射路径的格式正确
+                    classMapping = classMapping.endsWith('/') ? classMapping.slice(0, -1) : classMapping;
+                    classMapping = classMapping.startsWith('/') ? classMapping : '/' + classMapping;
                 }
             }
+        }
 
-            if (isController) {
-                // 检查端点映射
-                const mappingAnnotations = [
-                    '@GetMapping',
-                    '@PostMapping',
-                    '@PutMapping',
-                    '@DeleteMapping',
-                    '@PatchMapping',
-                    '@RequestMapping'
-                ];
+        // 如果不是控制器类，直接返回
+        if (!isController) {
+            return;
+        }
 
-                for (const annotation of mappingAnnotations) {
-                    if (line.includes(annotation)) {
-                        const methodMatch = lines.slice(i + 1).find(l => l.includes('public') || l.includes('private') || l.includes('protected'));
-                        if (methodMatch) {
-                            const methodName = methodMatch.match(/\s(\w+)\s*\(/)?.[1] || '';
-                            const pathMatch = line.match(/"([^"]+)"/);
-                            const path = pathMatch ? pathMatch[1] : '/';
-                            const fullPath = path.startsWith('/') ? path : '/' + path;
-                            const method = this.getHttpMethod(annotation, line);
+        // 然后处理方法级别的注解
+        for (let i = 0; i < lines.length; i++) {
+            const line = lines[i].trim();
 
-                            // 添加新的API端点
-                            this.endpoints.push({
-                                path: classMapping + fullPath,
-                                method,
-                                location: new vscode.Location(
-                                    vscode.Uri.file(filePath),
-                                    new vscode.Position(i, 0)
-                                ),
-                                className,
-                                methodName
-                            });
-                        }
+            // 检查端点映射
+            const mappingAnnotations = [
+                '@GetMapping',
+                '@PostMapping',
+                '@PutMapping',
+                '@DeleteMapping',
+                '@PatchMapping',
+                '@RequestMapping'
+            ];
+
+            for (const annotation of mappingAnnotations) {
+                if (line.includes(annotation)) {
+                    const methodMatch = lines.slice(i + 1).find(l => l.includes('public') || l.includes('private') || l.includes('protected'));
+                    if (methodMatch) {
+                        const methodName = methodMatch.match(/\s(\w+)\s*\(/)?.[1] || '';
+                        const pathMatch = line.match(/\"([^\"]+)\"/);
+                        let methodPath = pathMatch ? pathMatch[1] : '/';
+                        
+                        // 确保方法路径的格式正确
+                        methodPath = methodPath.startsWith('/') ? methodPath : '/' + methodPath;
+                        
+                        // 组合完整路径
+                        const fullPath = classMapping + methodPath;
+                        
+                        const method = this.getHttpMethod(annotation, line);
+
+                        // 添加新的API端点
+                        this.endpoints.push({
+                            path: fullPath,
+                            method,
+                            location: new vscode.Location(
+                                vscode.Uri.file(filePath),
+                                new vscode.Position(i, 0)
+                            ),
+                            className,
+                            methodName
+                        });
                     }
                 }
             }
@@ -204,31 +230,65 @@ export function activate(context: vscode.ExtensionContext) {
             showCollapseAll: true
         });
 
-        // 创建搜索框
-        const searchBox = vscode.window.createInputBox();
-        searchBox.placeholder = 'Search API endpoints...';
-        searchBox.onDidChangeValue(text => {
-            treeDataProvider.setSearchText(text);
+        // 注册搜索命令
+        const searchCommand = vscode.commands.registerCommand('restful-tool.showSearch', async () => {
+            const quickPick = vscode.window.createQuickPick<vscode.QuickPickItem & { endpoint: ApiEndpoint }>();
+            quickPick.placeholder = '搜索API端点...';
+            quickPick.matchOnDescription = true;
+
+            // 实时搜索处理
+            quickPick.onDidChangeValue(value => {
+                const searchText = value.toLowerCase();
+                const endpoints = treeDataProvider.getAllEndpoints();
+                quickPick.items = endpoints
+                    .filter(endpoint =>
+                        endpoint.path.toLowerCase().includes(searchText) ||
+                        endpoint.method.toLowerCase().includes(searchText) ||
+                        endpoint.className.toLowerCase().includes(searchText)
+                    )
+                    .map(endpoint => ({
+                        label: `${endpoint.method} ${endpoint.path}`,
+                        description: `${endpoint.className}.${endpoint.methodName}`,
+                        endpoint
+                    }));
+            });
+
+            // 处理选择事件
+            quickPick.onDidAccept(() => {
+                const selected = quickPick.selectedItems[0];
+                if (selected) {
+                    // 如果选中了某一项，跳转到对应位置
+                    const endpoint = selected.endpoint;
+                    vscode.window.showTextDocument(endpoint.location.uri, {
+                        selection: endpoint.location.range
+                    });
+                    quickPick.hide();
+                } else {
+                    // 如果没有选中项但有搜索文本，应用搜索到树视图
+                    treeDataProvider.setSearchText(quickPick.value);
+                    quickPick.hide();
+                }
+            });
+
+            quickPick.show();
         });
 
-        // 注册视图标题菜单命令
-        const searchCommand = vscode.commands.registerCommand('restful-tool.search', () => {
-            searchBox.show();
+        // 注册清除搜索命令
+        const clearSearchCommand = vscode.commands.registerCommand('restful-tool.clearSearch', () => {
+            treeDataProvider.setSearchText('');
         });
 
         context.subscriptions.push(
             treeView,
-            searchBox,
-            searchCommand
+            searchCommand,
+            clearSearchCommand
         );
 
         // 初始扫描
         treeDataProvider.refresh();
         
     } catch (error: any) {
-        // 处理错误，但不抛出 instrumentation key 错误
         console.error('Extension activation error:', error);
-        // 显示错误消息给用户
         vscode.window.showErrorMessage(`Error activating RestfulTool: ${error.message || 'Unknown error'}`);
     }
 }
