@@ -5,7 +5,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { ApiEndpoint } from './models/api-endpoint.model';
 import { ParserFactory } from './parsers/parser-factory';
-import { HttpMethodUtils } from './utils/http-method-utils';
+import { HttpMethodUtils } from './models/http-method.enum';
 
 // API树数据提供者类
 class ApiTreeDataProvider implements vscode.TreeDataProvider<ApiEndpoint>, vscode.Disposable {
@@ -118,7 +118,7 @@ class ApiTreeDataProvider implements vscode.TreeDataProvider<ApiEndpoint>, vscod
             vscode.TreeItemCollapsibleState.None
         );
         
-        treeItem.description = `${element.className}.${element.methodName}`;
+        treeItem.description = `${element.className}.${element.methodName}${element.framework ? ` (${element.framework})` : ''}`;
         treeItem.tooltip = `${element.method} ${element.path}\n${element.className}.${element.methodName}`;
         if (element.framework) {
             treeItem.tooltip += `\nFramework: ${element.framework}`;
@@ -133,8 +133,14 @@ class ApiTreeDataProvider implements vscode.TreeDataProvider<ApiEndpoint>, vscod
             ]
         };
 
-        // 使用HttpMethodUtils获取图标路径
-        treeItem.iconPath = HttpMethodUtils.getIconPath(element.method);
+        // 添加调试信息
+        const iconPath = HttpMethodUtils.getIconPath(element.method);
+        console.log('Icon path:', {
+            method: element.method,
+            light: iconPath.light.toString(),
+            dark: iconPath.dark.toString()
+        });
+        treeItem.iconPath = iconPath;
 
         return treeItem;
     }
@@ -214,86 +220,87 @@ class ApiTreeDataProvider implements vscode.TreeDataProvider<ApiEndpoint>, vscod
 
 // 激活扩展
 export function activate(context: vscode.ExtensionContext) {
-    try {
-        // 创建API树数据提供者
-        const treeDataProvider = new ApiTreeDataProvider();
-        
-        // 创建树视图
-        const treeView = vscode.window.createTreeView('restful-tool-view', {
-            treeDataProvider: treeDataProvider,
-            showCollapseAll: true
+    // 初始化HttpMethodUtils
+    HttpMethodUtils.initialize(context);
+
+    // 创建API树数据提供者
+    const apiTreeDataProvider = new ApiTreeDataProvider();
+    context.subscriptions.push(
+        vscode.window.registerTreeDataProvider('restful-tool', apiTreeDataProvider)
+    );
+
+    // 创建树视图
+    const treeView = vscode.window.createTreeView('restful-tool-view', {
+        treeDataProvider: apiTreeDataProvider,
+        showCollapseAll: true
+    });
+
+    // 注册刷新命令
+    const refreshCommand = vscode.commands.registerCommand('restful-tool.refreshEndpoints', () => {
+        apiTreeDataProvider.refresh();
+    });
+
+    // 注册搜索命令
+    const searchCommand = vscode.commands.registerCommand('restful-tool.showSearch', async () => {
+        const quickPick = vscode.window.createQuickPick<vscode.QuickPickItem & { endpoint: ApiEndpoint }>();
+        quickPick.placeholder = '搜索API端点...';
+        quickPick.matchOnDescription = true;
+
+        // 实时搜索处理
+        quickPick.onDidChangeValue(value => {
+            const searchText = value.toLowerCase();
+            const endpoints = apiTreeDataProvider.getAllEndpoints();
+            quickPick.items = endpoints
+                .filter(endpoint =>
+                    endpoint.path.toLowerCase().includes(searchText) ||
+                    endpoint.method.toLowerCase().includes(searchText) ||
+                    endpoint.className.toLowerCase().includes(searchText) ||
+                    (endpoint.framework && endpoint.framework.toLowerCase().includes(searchText))
+                )
+                .map(endpoint => ({
+                    label: `${endpoint.method} ${endpoint.path}`,
+                    description: `${endpoint.className}.${endpoint.methodName}${endpoint.framework ? ` (${endpoint.framework})` : ''}`,
+                    endpoint,
+                    iconPath: HttpMethodUtils.getIconPath(endpoint.method)
+                }));
         });
 
-        // 注册刷新命令
-        const refreshCommand = vscode.commands.registerCommand('restful-tool.refreshEndpoints', () => {
-            treeDataProvider.refresh();
+        // 处理选择事件
+        quickPick.onDidAccept(() => {
+            const selected = quickPick.selectedItems[0];
+            if (selected) {
+                // 如果选中了某一项，跳转到对应位置
+                const endpoint = selected.endpoint;
+                vscode.window.showTextDocument(endpoint.location.uri, {
+                    selection: endpoint.location.range
+                });
+                quickPick.hide();
+            } else {
+                // 如果没有选中项但有搜索文本，应用搜索到树视图
+                apiTreeDataProvider.setSearchText(quickPick.value);
+                quickPick.hide();
+            }
         });
 
-        // 注册搜索命令
-        const searchCommand = vscode.commands.registerCommand('restful-tool.showSearch', async () => {
-            const quickPick = vscode.window.createQuickPick<vscode.QuickPickItem & { endpoint: ApiEndpoint }>();
-            quickPick.placeholder = '搜索API端点...';
-            quickPick.matchOnDescription = true;
+        quickPick.show();
+    });
 
-            // 实时搜索处理
-            quickPick.onDidChangeValue(value => {
-                const searchText = value.toLowerCase();
-                const endpoints = treeDataProvider.getAllEndpoints();
-                quickPick.items = endpoints
-                    .filter(endpoint =>
-                        endpoint.path.toLowerCase().includes(searchText) ||
-                        endpoint.method.toLowerCase().includes(searchText) ||
-                        endpoint.className.toLowerCase().includes(searchText) ||
-                        (endpoint.framework && endpoint.framework.toLowerCase().includes(searchText))
-                    )
-                    .map(endpoint => ({
-                        label: `${endpoint.method} ${endpoint.path}`,
-                        description: `${endpoint.className}.${endpoint.methodName}${endpoint.framework ? ` (${endpoint.framework})` : ''}`,
-                        endpoint,
-                        iconPath: HttpMethodUtils.getIconPath(endpoint.method)
-                    }));
-            });
+    // 注册清除搜索命令
+    const clearSearchCommand = vscode.commands.registerCommand('restful-tool.clearSearch', () => {
+        apiTreeDataProvider.setSearchText('');
+    });
 
-            // 处理选择事件
-            quickPick.onDidAccept(() => {
-                const selected = quickPick.selectedItems[0];
-                if (selected) {
-                    // 如果选中了某一项，跳转到对应位置
-                    const endpoint = selected.endpoint;
-                    vscode.window.showTextDocument(endpoint.location.uri, {
-                        selection: endpoint.location.range
-                    });
-                    quickPick.hide();
-                } else {
-                    // 如果没有选中项但有搜索文本，应用搜索到树视图
-                    treeDataProvider.setSearchText(quickPick.value);
-                    quickPick.hide();
-                }
-            });
+    context.subscriptions.push(
+        treeView,
+        searchCommand,
+        clearSearchCommand,
+        refreshCommand,
+        apiTreeDataProvider
+    );
 
-            quickPick.show();
-        });
-
-        // 注册清除搜索命令
-        const clearSearchCommand = vscode.commands.registerCommand('restful-tool.clearSearch', () => {
-            treeDataProvider.setSearchText('');
-        });
-
-        context.subscriptions.push(
-            treeView,
-            searchCommand,
-            clearSearchCommand,
-            refreshCommand,
-            treeDataProvider
-        );
-
-        // 初始扫描
-        treeDataProvider.refresh();
-        
-    } catch (error: any) {
-        console.error('Extension activation error:', error);
-        vscode.window.showErrorMessage(`Error activating RestfulTool: ${error.message || 'Unknown error'}`);
-    }
+    // 初始扫描
+    apiTreeDataProvider.refresh();
+    
 }
 
 // this method is called when your extension is deactivated

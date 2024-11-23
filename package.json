@@ -1,7 +1,7 @@
 {
   "name": "restfultool",
   "displayName": "RestfulTool",
-  "description": "Spring REST API Explorer for VSCode",
+  "description": "REST API Explorer for VSCode",
   "version": "0.0.1",
   "engines": {
     "vscode": "^1.95.0"
