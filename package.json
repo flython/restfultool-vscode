@@ -1,21 +1,47 @@
 {
   "name": "restfultool",
   "displayName": "RestfulTool",
-  "description": "find you restApi!",
+  "description": "Spring REST API Explorer for VSCode",
   "version": "0.0.1",
   "engines": {
     "vscode": "^1.95.0"
   },
   "categories": [
+    "Programming Languages",
     "Other"
   ],
-  "activationEvents": [],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
   "main": "./dist/extension.js",
   "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "restful-explorer",
+          "title": "REST API Explorer",
+          "icon": "media/api-icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "restful-explorer": [
+        {
+          "id": "restfulExplorer",
+          "name": "API Endpoints"
+        }
+      ]
+    },
     "commands": [
       {
-        "command": "restfultool.helloWorld",
-        "title": "Hello World"
+        "command": "restfultool.refreshEndpoints",
+        "title": "Refresh API Endpoints",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "restfultool.searchEndpoints",
+        "title": "Search API Endpoints",
+        "icon": "$(search)"
       }
     ]
   },
