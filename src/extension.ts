@@ -14,99 +14,103 @@ interface ApiEndpoint {
 }
 
 // API树数据提供者类
-class ApiTreeDataProvider implements vscode.TreeDataProvider<ApiEndpoint> {
+class ApiTreeDataProvider implements vscode.TreeDataProvider<ApiEndpoint>, vscode.Disposable {
     private _onDidChangeTreeData: vscode.EventEmitter<void> = new vscode.EventEmitter<void>();
     readonly onDidChangeTreeData: vscode.Event<void> = this._onDidChangeTreeData.event;
 
     private endpoints: ApiEndpoint[] = [];
     private filteredEndpoints: ApiEndpoint[] = [];
     private searchText: string = '';
+    private fileWatcher: vscode.FileSystemWatcher | undefined;
+    private fileCache: Map<string, { mtime: number, endpoints: ApiEndpoint[] }> = new Map();
 
-    // 刷新树视图
-    async refresh(): Promise<void> {
-        this.endpoints = [];  // 清空端点列表
-        await this.scanWorkspace();  // 重新扫描工作区
-        this.filterEndpoints();  // 应用过滤
-        this._onDidChangeTreeData.fire();  // 触发树视图更新
+    constructor() {
+        this.setupFileWatcher();
     }
 
-    // 获取树项目
-    getTreeItem(element: ApiEndpoint): vscode.TreeItem {
-        const treeItem = new vscode.TreeItem(
-            `${element.method} ${element.path}`,
-            vscode.TreeItemCollapsibleState.None
+    dispose() {
+        if (this.fileWatcher) {
+            this.fileWatcher.dispose();
+        }
+        this._onDidChangeTreeData.dispose();
+    }
+
+    private setupFileWatcher() {
+        // 监听 Java 文件的变化
+        this.fileWatcher = vscode.workspace.createFileSystemWatcher(
+            "**/*.java",
+            false, // 创建文件
+            false, // 删除文件
+            false  // 修改文件
         );
-        treeItem.description = `${element.className}.${element.methodName}`;
-        treeItem.command = {
-            command: 'vscode.open',
-            title: 'Open API Definition',
-            arguments: [element.location.uri, { selection: element.location.range }]
-        };
-        return treeItem;
+
+        // 文件创建时
+        this.fileWatcher.onDidCreate(async uri => {
+            await this.handleFileChange(uri);
+        });
+
+        // 文件修改时
+        this.fileWatcher.onDidChange(async uri => {
+            await this.handleFileChange(uri);
+        });
+
+        // 文件删除时
+        this.fileWatcher.onDidDelete(uri => {
+            this.handleFileDelete(uri);
+        });
     }
 
-    // 获取子项目（这里返回过滤后的端点列表）
-    getChildren(): ApiEndpoint[] {
-        return this.filteredEndpoints;
-    }
-
-    // 设置搜索文本并更新树视图
-    setSearchText(text: string): void {
-        this.searchText = text.toLowerCase();
-        this.filterEndpoints();
-        this._onDidChangeTreeData.fire();
-        // 更新搜索状态
-        vscode.commands.executeCommand('setContext', 'restful-tool.hasSearchText', !!this.searchText);
-    }
-
-    // 根据搜索文本过滤端点
-    private filterEndpoints(): void {
-        if (!this.searchText) {
-            this.filteredEndpoints = [...this.endpoints];
-            return;
-        }
-        this.filteredEndpoints = this.endpoints.filter(endpoint => 
-            endpoint.path.toLowerCase().includes(this.searchText) ||
-            endpoint.method.toLowerCase().includes(this.searchText) ||
-            endpoint.className.toLowerCase().includes(this.searchText)
-        );
-    }
-
-    // 获取所有端点（用于快速搜索）
-    getAllEndpoints(): ApiEndpoint[] {
-        return this.endpoints;
-    }
-
-    // 扫描工作区
-    private async scanWorkspace(): Promise<void> {
-        const workspaceFolders = vscode.workspace.workspaceFolders;
-        if (!workspaceFolders) {
-            return;
-        }
-
-        for (const folder of workspaceFolders) {
-            await this.scanDirectory(folder.uri.fsPath);
-        }
-    }
-
-    // 递归扫描目录
-    private async scanDirectory(dirPath: string): Promise<void> {
-        const files = await fs.promises.readdir(dirPath);
-        
-        for (const file of files) {
-            const filePath = path.join(dirPath, file);
-            const stat = await fs.promises.stat(filePath);
-
-            if (stat.isDirectory() && !file.startsWith('.') && file !== 'node_modules') {
-                await this.scanDirectory(filePath);
-            } else if (file.endsWith('.java')) {
-                await this.parseJavaFile(filePath);
+    private async handleFileChange(uri: vscode.Uri) {
+        try {
+            // 检查文件是否存在
+            const stat = await vscode.workspace.fs.stat(uri);
+            
+            // 检查缓存
+            const cached = this.fileCache.get(uri.fsPath);
+            if (cached && cached.mtime === stat.mtime) {
+                return; // 文件未变化，使用缓存
             }
+
+            // 解析文件
+            const oldEndpoints = this.endpoints.filter(e => e.location.uri.fsPath === uri.fsPath);
+            const newEndpoints = await this.parseJavaFile(uri.fsPath);
+
+            // 更新缓存
+            this.fileCache.set(uri.fsPath, {
+                mtime: stat.mtime,
+                endpoints: newEndpoints
+            });
+
+            // 更新端点列表
+            this.endpoints = [
+                ...this.endpoints.filter(e => e.location.uri.fsPath !== uri.fsPath),
+                ...newEndpoints
+            ];
+
+            // 如果端点有变化，刷新视图
+            if (JSON.stringify(oldEndpoints) !== JSON.stringify(newEndpoints)) {
+                this.filterEndpoints();
+                this._onDidChangeTreeData.fire();
+            }
+        } catch (error) {
+            console.error(`Error handling file change for ${uri.fsPath}:`, error);
         }
     }
 
-    // 解析Java文件
-    private async parseJavaFile(filePath: string): Promise<void> {
+    private handleFileDelete(uri: vscode.Uri) {
+        // 从缓存和端点列表中移除
+        this.fileCache.delete(uri.fsPath);
+        const hadEndpoints = this.endpoints.some(e => e.location.uri.fsPath === uri.fsPath);
+        if (hadEndpoints) {
+            this.endpoints = this.endpoints.filter(e => e.location.uri.fsPath !== uri.fsPath);
+            this.filterEndpoints();
+            this._onDidChangeTreeData.fire();
+        }
+    }
+
+    // 修改 parseJavaFile 方法返回解析到的端点
+    private async parseJavaFile(filePath: string): Promise<ApiEndpoint[]> {
+        const endpoints: ApiEndpoint[] = [];
         const content = await fs.promises.readFile(filePath, 'utf-8');
         const lines = content.split('\n');
 
@@ -138,12 +142,12 @@ class ApiTreeDataProvider implements vscode.TreeDataProvider<ApiEndpoint> {
             }
 
             if (className && !isController) {
-                return; // 如果找到类名但不是Controller，直接返回
+                return endpoints;
             }
         }
 
         if (!isController) {
-            return; // 如果不是控制器类，直接返回
+            return endpoints;
         }
 
         // 处理方法级别的注解
@@ -155,17 +159,13 @@ class ApiTreeDataProvider implements vscode.TreeDataProvider<ApiEndpoint> {
                 const pathMatch = line.match(/\"([^\"]+)\"/);
                 let methodPath = pathMatch ? pathMatch[1] : '/';
                 
-                        methodPath = methodPath.startsWith('/') ? methodPath : '/' + methodPath;
-                        methodPath = methodPath.startsWith('/') ? methodPath : '/' + methodPath;
-                        
-                        // 组合完整路径
-                methodPath = methodPath.startsWith('/') ? methodPath : '/' + methodPath;        
-                        
+                methodPath = methodPath.startsWith('/') ? methodPath : '/' + methodPath;
+                
                 const fullPath = classMapping + methodPath;
-                        
+                
                 const method = this.getHttpMethod(annotation, line);
 
-                this.endpoints.push({
+                endpoints.push({
                     path: fullPath,
                     method,
                     location: new vscode.Location(
@@ -177,6 +177,131 @@ class ApiTreeDataProvider implements vscode.TreeDataProvider<ApiEndpoint> {
                 });
             }
         }
+
+        return endpoints;
+    }
+
+    // 刷新树视图
+    async refresh(): Promise<void> {
+        this.endpoints = [];
+        this.fileCache.clear();
+        await this.scanWorkspace();
+        this.filterEndpoints();
+        this._onDidChangeTreeData.fire();
+    }
+
+    // 获取树项目
+    getTreeItem(element: ApiEndpoint): vscode.TreeItem {
+        const treeItem = new vscode.TreeItem(
+            `${element.method} ${element.path}`,
+            vscode.TreeItemCollapsibleState.None
+        );
+        
+        treeItem.description = `${element.className}.${element.methodName}`;
+        treeItem.tooltip = `${element.method} ${element.path}\n${element.className}.${element.methodName}`;
+        treeItem.command = {
+            command: 'vscode.open',
+            title: 'Open API Definition',
+            arguments: [
+                element.location.uri,
+                { selection: element.location.range }
+            ]
+        };
+
+        // 根据HTTP方法设置不同的图标
+        const iconMap: { [key: string]: { light: string; dark: string } } = {
+            'GET': {
+                light: path.join(__filename, '..', '..', 'resources', 'get.svg'),
+                dark: path.join(__filename, '..', '..', 'resources', 'get.svg')
+            },
+            'POST': {
+                light: path.join(__filename, '..', '..', 'resources', 'post.svg'),
+                dark: path.join(__filename, '..', '..', 'resources', 'post.svg')
+            },
+            'PUT': {
+                light: path.join(__filename, '..', '..', 'resources', 'put.svg'),
+                dark: path.join(__filename, '..', '..', 'resources', 'put.svg')
+            },
+            'DELETE': {
+                light: path.join(__filename, '..', '..', 'resources', 'delete.svg'),
+                dark: path.join(__filename, '..', '..', 'resources', 'delete.svg')
+            },
+            'PATCH': {
+                light: path.join(__filename, '..', '..', 'resources', 'patch.svg'),
+                dark: path.join(__filename, '..', '..', 'resources', 'patch.svg')
+            }
+        };
+        treeItem.iconPath = iconMap[element.method] || {
+            light: path.join(__filename, '..', '..', 'resources', 'get.svg'),
+            dark: path.join(__filename, '..', '..', 'resources', 'get.svg')
+        };
+
+        return treeItem;
+    }
+
+    // 获取子项目
+    getChildren(element?: ApiEndpoint): ApiEndpoint[] {
+        if (element) {
+            return [];
+        }
+        return this.filteredEndpoints;
+    }
+
+    // 扫描工作区
+    private async scanWorkspace(): Promise<void> {
+        const javaFiles = await vscode.workspace.findFiles('**/*.java');
+        
+        for (const file of javaFiles) {
+            const filePath = file.fsPath;
+            try {
+                // 检查文件是否存在于缓存中
+                const stat = await vscode.workspace.fs.stat(file);
+                const cached = this.fileCache.get(filePath);
+                
+                if (cached && cached.mtime === stat.mtime) {
+                    // 使用缓存的端点
+                    this.endpoints.push(...cached.endpoints);
+                } else {
+                    // 解析文件并更新缓存
+                    const newEndpoints = await this.parseJavaFile(filePath);
+                    this.endpoints.push(...newEndpoints);
+                    this.fileCache.set(filePath, {
+                        mtime: stat.mtime,
+                        endpoints: newEndpoints
+                    });
+                }
+            } catch (error) {
+                console.error(`Error processing file ${filePath}:`, error);
+            }
+        }
+    }
+
+    // 设置搜索文本
+    setSearchText(text: string) {
+        this.searchText = text;
+        this.filterEndpoints();
+        this._onDidChangeTreeData.fire();
+    }
+
+    // 过滤端点
+    private filterEndpoints() {
+        if (!this.searchText) {
+            this.filteredEndpoints = this.endpoints;
+            return;
+        }
+
+        const searchLower = this.searchText.toLowerCase();
+        this.filteredEndpoints = this.endpoints.filter(endpoint => {
+            return endpoint.path.toLowerCase().includes(searchLower) ||
+                   endpoint.method.toLowerCase().includes(searchLower) ||
+                   endpoint.className.toLowerCase().includes(searchLower) ||
+                   endpoint.methodName.toLowerCase().includes(searchLower);
+        });
+    }
+
+    // 获取所有端点（用于快速搜索）
+    getAllEndpoints(): ApiEndpoint[] {
+        return this.endpoints;
     }
 
     // 根据注解获取HTTP方法
@@ -214,6 +339,11 @@ export function activate(context: vscode.ExtensionContext) {
         const treeView = vscode.window.createTreeView('restful-tool-view', {
             treeDataProvider: treeDataProvider,
             showCollapseAll: true
+        });
+
+        // 注册刷新命令
+        const refreshCommand = vscode.commands.registerCommand('restful-tool.refreshEndpoints', () => {
+            treeDataProvider.refresh();
         });
 
         // 注册搜索命令
@@ -267,7 +397,9 @@ export function activate(context: vscode.ExtensionContext) {
         context.subscriptions.push(
             treeView,
             searchCommand,
-            clearSearchCommand
+            clearSearchCommand,
+            refreshCommand,
+            treeDataProvider // 将 treeDataProvider 添加到订阅列表中以确保正确释放资源
         );
 
         // 初始扫描

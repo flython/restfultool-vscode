@@ -41,7 +41,7 @@
     ],
     "commands": [
       {
-        "command": "restfultool.refreshEndpoints",
+        "command": "restful-tool.refreshEndpoints",
         "title": "Refresh API Endpoints",
         "icon": "$(refresh)"
       },
@@ -77,7 +77,7 @@
           "group": "navigation@2"
         },
         {
-          "command": "restfultool.refreshEndpoints",
+          "command": "restful-tool.refreshEndpoints",
           "when": "view == restful-tool-view",
           "group": "navigation@3"
         }
