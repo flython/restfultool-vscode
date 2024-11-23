@@ -365,7 +365,11 @@ export function activate(context: vscode.ExtensionContext) {
                     .map(endpoint => ({
                         label: `${endpoint.method} ${endpoint.path}`,
                         description: `${endpoint.className}.${endpoint.methodName}`,
-                        endpoint
+                        endpoint,
+                        iconPath: {
+                            light: path.join(__filename, '..', '..', 'resources', `${endpoint.method.toLowerCase()}.svg`),
+                            dark: path.join(__filename, '..', '..', 'resources', `${endpoint.method.toLowerCase()}.svg`)
+                        }
                     }));
             });
 
