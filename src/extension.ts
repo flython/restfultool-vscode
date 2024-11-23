@@ -3,21 +3,14 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
-
-// 定义API端点的接口
-interface ApiEndpoint {
-    path: string;          // API路径
-    method: string;        // HTTP方法
-    location: vscode.Location;  // 在文件中的位置
-    className: string;     // 所属类名
-    methodName: string;    // 方法名
-}
+import { ApiEndpoint } from './models/api-endpoint.model';
+import { ParserFactory } from './parsers/parser-factory';
+import { HttpMethodUtils } from './utils/http-method-utils';
 
 // API树数据提供者类
 class ApiTreeDataProvider implements vscode.TreeDataProvider<ApiEndpoint>, vscode.Disposable {
     private _onDidChangeTreeData: vscode.EventEmitter<void> = new vscode.EventEmitter<void>();
     readonly onDidChangeTreeData: vscode.Event<void> = this._onDidChangeTreeData.event;
-
     private endpoints: ApiEndpoint[] = [];
     private filteredEndpoints: ApiEndpoint[] = [];
     private searchText: string = '';
@@ -36,9 +29,13 @@ class ApiTreeDataProvider implements vscode.TreeDataProvider<ApiEndpoint>, vscod
     }
 
     private setupFileWatcher() {
-        // 监听 Java 文件的变化
+        // 获取所有支持的文件扩展名
+        const extensions = ParserFactory.getSupportedExtensions();
+        const pattern = `**/*{${extensions.join(',')}}`;
+
+        // 监听支持的文件的变化
         this.fileWatcher = vscode.workspace.createFileSystemWatcher(
-            "**/*.java",
+            pattern,
             false, // 创建文件
             false, // 删除文件
             false  // 修改文件
@@ -62,33 +59,31 @@ class ApiTreeDataProvider implements vscode.TreeDataProvider<ApiEndpoint>, vscod
 
     private async handleFileChange(uri: vscode.Uri) {
         try {
-            // 检查文件是否存在
             const stat = await vscode.workspace.fs.stat(uri);
-            
-            // 检查缓存
             const cached = this.fileCache.get(uri.fsPath);
+            
             if (cached && cached.mtime === stat.mtime) {
                 return; // 文件未变化，使用缓存
             }
 
-            // 解析文件
-            const oldEndpoints = this.endpoints.filter(e => e.location.uri.fsPath === uri.fsPath);
-            const newEndpoints = await this.parseJavaFile(uri.fsPath);
+            const content = await fs.promises.readFile(uri.fsPath, 'utf-8');
+            const parser = await ParserFactory.getParser(uri.fsPath, content);
+            
+            if (parser) {
+                const newEndpoints = await parser.parseFile(uri.fsPath, content);
+                
+                // 更新缓存
+                this.fileCache.set(uri.fsPath, {
+                    mtime: stat.mtime,
+                    endpoints: newEndpoints
+                });
 
-            // 更新缓存
-            this.fileCache.set(uri.fsPath, {
-                mtime: stat.mtime,
-                endpoints: newEndpoints
-            });
+                // 更新端点列表
+                this.endpoints = [
+                    ...this.endpoints.filter(e => e.location.uri.fsPath !== uri.fsPath),
+                    ...newEndpoints
+                ];
 
-            // 更新端点列表
-            this.endpoints = [
-                ...this.endpoints.filter(e => e.location.uri.fsPath !== uri.fsPath),
-                ...newEndpoints
-            ];
-
-            // 如果端点有变化，刷新视图
-            if (JSON.stringify(oldEndpoints) !== JSON.stringify(newEndpoints)) {
                 this.filterEndpoints();
                 this._onDidChangeTreeData.fire();
             }
@@ -98,7 +93,6 @@ class ApiTreeDataProvider implements vscode.TreeDataProvider<ApiEndpoint>, vscod
     }
 
     private handleFileDelete(uri: vscode.Uri) {
-        // 从缓存和端点列表中移除
         this.fileCache.delete(uri.fsPath);
         const hadEndpoints = this.endpoints.some(e => e.location.uri.fsPath === uri.fsPath);
         if (hadEndpoints) {
@@ -106,79 +100,6 @@ class ApiTreeDataProvider implements vscode.TreeDataProvider<ApiEndpoint>, vscod
             this.filterEndpoints();
             this._onDidChangeTreeData.fire();
         }
-    }
-
-    // 修改 parseJavaFile 方法返回解析到的端点
-    private async parseJavaFile(filePath: string): Promise<ApiEndpoint[]> {
-        const endpoints: ApiEndpoint[] = [];
-        const content = await fs.promises.readFile(filePath, 'utf-8');
-        const lines = content.split('\n');
-
-        let className = '';
-        let classMapping = '';
-        let isController = false;
-        const endpointAnnotations: { annotation: string; lineNumber: number }[] = [];
-
-        // 首先检查类级别的注解和收集端点注解
-        for (let i = 0; i < lines.length; i++) {
-            const line = lines[i].trim();
-
-            if (line.includes('@Controller') || line.includes('@RestController')) {
-                isController = true;
-            } else if (line.includes('class ')) {
-                className = line.split('class ')[1].split(' ')[0];
-            } else if (line.includes('@RequestMapping') && !className) {
-                const match = line.match(/\"([^\"]+)\"/);
-                if (match) {
-                    classMapping = match[1];
-                    classMapping = classMapping.endsWith('/') ? classMapping.slice(0, -1) : classMapping;
-                    classMapping = classMapping.startsWith('/') ? classMapping : '/' + classMapping;
-                }
-            } else {
-                const annotation = ['@GetMapping', '@PostMapping', '@PutMapping', '@DeleteMapping', '@PatchMapping', '@RequestMapping'].find(a => line.includes(a));
-                if (annotation) {
-                    endpointAnnotations.push({ annotation, lineNumber: i });
-                }
-            }
-
-            if (className && !isController) {
-                return endpoints;
-            }
-        }
-
-        if (!isController) {
-            return endpoints;
-        }
-
-        // 处理方法级别的注解
-        for (const { annotation, lineNumber } of endpointAnnotations) {
-            const line = lines[lineNumber].trim();
-            const methodMatch = lines.slice(lineNumber + 1).find(l => l.includes('public') || l.includes('private') || l.includes('protected'));
-            if (methodMatch) {
-                const methodName = methodMatch.match(/\s(\w+)\s*\(/)?.[1] || '';
-                const pathMatch = line.match(/\"([^\"]+)\"/);
-                let methodPath = pathMatch ? pathMatch[1] : '/';
-                
-                methodPath = methodPath.startsWith('/') ? methodPath : '/' + methodPath;
-                
-                const fullPath = classMapping + methodPath;
-                
-                const method = this.getHttpMethod(annotation, line);
-
-                endpoints.push({
-                    path: fullPath,
-                    method,
-                    location: new vscode.Location(
-                        vscode.Uri.file(filePath),
-                        new vscode.Position(lineNumber, 0)
-                    ),
-                    className,
-                    methodName
-                });
-            }
-        }
-
-        return endpoints;
     }
 
     // 刷新树视图
@@ -199,6 +120,10 @@ class ApiTreeDataProvider implements vscode.TreeDataProvider<ApiEndpoint>, vscod
         
         treeItem.description = `${element.className}.${element.methodName}`;
         treeItem.tooltip = `${element.method} ${element.path}\n${element.className}.${element.methodName}`;
+        if (element.framework) {
+            treeItem.tooltip += `\nFramework: ${element.framework}`;
+        }
+        
         treeItem.command = {
             command: 'vscode.open',
             title: 'Open API Definition',
@@ -208,33 +133,8 @@ class ApiTreeDataProvider implements vscode.TreeDataProvider<ApiEndpoint>, vscod
             ]
         };
 
-        // 根据HTTP方法设置不同的图标
-        const iconMap: { [key: string]: { light: string; dark: string } } = {
-            'GET': {
-                light: path.join(__filename, '..', '..', 'resources', 'get.svg'),
-                dark: path.join(__filename, '..', '..', 'resources', 'get.svg')
-            },
-            'POST': {
-                light: path.join(__filename, '..', '..', 'resources', 'post.svg'),
-                dark: path.join(__filename, '..', '..', 'resources', 'post.svg')
-            },
-            'PUT': {
-                light: path.join(__filename, '..', '..', 'resources', 'put.svg'),
-                dark: path.join(__filename, '..', '..', 'resources', 'put.svg')
-            },
-            'DELETE': {
-                light: path.join(__filename, '..', '..', 'resources', 'delete.svg'),
-                dark: path.join(__filename, '..', '..', 'resources', 'delete.svg')
-            },
-            'PATCH': {
-                light: path.join(__filename, '..', '..', 'resources', 'patch.svg'),
-                dark: path.join(__filename, '..', '..', 'resources', 'patch.svg')
-            }
-        };
-        treeItem.iconPath = iconMap[element.method] || {
-            light: path.join(__filename, '..', '..', 'resources', 'get.svg'),
-            dark: path.join(__filename, '..', '..', 'resources', 'get.svg')
-        };
+        // 使用HttpMethodUtils获取图标路径
+        treeItem.iconPath = HttpMethodUtils.getIconPath(element.method);
 
         return treeItem;
     }
@@ -249,12 +149,13 @@ class ApiTreeDataProvider implements vscode.TreeDataProvider<ApiEndpoint>, vscod
 
     // 扫描工作区
     private async scanWorkspace(): Promise<void> {
-        const javaFiles = await vscode.workspace.findFiles('**/*.java');
+        const extensions = ParserFactory.getSupportedExtensions();
+        const pattern = `**/*{${extensions.join(',')}}`;
+        const files = await vscode.workspace.findFiles(pattern);
         
-        for (const file of javaFiles) {
+        for (const file of files) {
             const filePath = file.fsPath;
             try {
-                // 检查文件是否存在于缓存中
                 const stat = await vscode.workspace.fs.stat(file);
                 const cached = this.fileCache.get(filePath);
                 
@@ -263,12 +164,17 @@ class ApiTreeDataProvider implements vscode.TreeDataProvider<ApiEndpoint>, vscod
                     this.endpoints.push(...cached.endpoints);
                 } else {
                     // 解析文件并更新缓存
-                    const newEndpoints = await this.parseJavaFile(filePath);
-                    this.endpoints.push(...newEndpoints);
-                    this.fileCache.set(filePath, {
-                        mtime: stat.mtime,
-                        endpoints: newEndpoints
-                    });
+                    const content = await fs.promises.readFile(filePath, 'utf-8');
+                    const parser = await ParserFactory.getParser(filePath, content);
+                    
+                    if (parser) {
+                        const newEndpoints = await parser.parseFile(filePath, content);
+                        this.endpoints.push(...newEndpoints);
+                        this.fileCache.set(filePath, {
+                            mtime: stat.mtime,
+                            endpoints: newEndpoints
+                        });
+                    }
                 }
             } catch (error) {
                 console.error(`Error processing file ${filePath}:`, error);
@@ -295,37 +201,14 @@ class ApiTreeDataProvider implements vscode.TreeDataProvider<ApiEndpoint>, vscod
             return endpoint.path.toLowerCase().includes(searchLower) ||
                    endpoint.method.toLowerCase().includes(searchLower) ||
                    endpoint.className.toLowerCase().includes(searchLower) ||
-                   endpoint.methodName.toLowerCase().includes(searchLower);
+                   endpoint.methodName.toLowerCase().includes(searchLower) ||
+                   (endpoint.framework && endpoint.framework.toLowerCase().includes(searchLower));
         });
     }
 
     // 获取所有端点（用于快速搜索）
     getAllEndpoints(): ApiEndpoint[] {
         return this.endpoints;
-    }
-
-    // 根据注解获取HTTP方法
-    private getHttpMethod(annotation: string, line: string): string {
-        switch (annotation) {
-            case '@GetMapping':
-                return 'GET';
-            case '@PostMapping':
-                return 'POST';
-            case '@PutMapping':
-                return 'PUT';
-            case '@DeleteMapping':
-                return 'DELETE';
-            case '@PatchMapping':
-                return 'PATCH';
-            case '@RequestMapping':
-                if (line.includes('method = RequestMethod.')) {
-                    const methodMatch = line.match(/RequestMethod\.(\w+)/);
-                    return methodMatch ? methodMatch[1] : 'GET';
-                }
-                return 'GET';
-            default:
-                return '？';
-        }
     }
 }
 
@@ -360,16 +243,14 @@ export function activate(context: vscode.ExtensionContext) {
                     .filter(endpoint =>
                         endpoint.path.toLowerCase().includes(searchText) ||
                         endpoint.method.toLowerCase().includes(searchText) ||
-                        endpoint.className.toLowerCase().includes(searchText)
+                        endpoint.className.toLowerCase().includes(searchText) ||
+                        (endpoint.framework && endpoint.framework.toLowerCase().includes(searchText))
                     )
                     .map(endpoint => ({
                         label: `${endpoint.method} ${endpoint.path}`,
-                        description: `${endpoint.className}.${endpoint.methodName}`,
+                        description: `${endpoint.className}.${endpoint.methodName}${endpoint.framework ? ` (${endpoint.framework})` : ''}`,
                         endpoint,
-                        iconPath: {
-                            light: path.join(__filename, '..', '..', 'resources', `${endpoint.method.toLowerCase()}.svg`),
-                            dark: path.join(__filename, '..', '..', 'resources', `${endpoint.method.toLowerCase()}.svg`)
-                        }
+                        iconPath: HttpMethodUtils.getIconPath(endpoint.method)
                     }));
             });
 
@@ -403,7 +284,7 @@ export function activate(context: vscode.ExtensionContext) {
             searchCommand,
             clearSearchCommand,
             refreshCommand,
-            treeDataProvider // 将 treeDataProvider 添加到订阅列表中以确保正确释放资源
+            treeDataProvider
         );
 
         // 初始扫描
@@ -415,4 +296,5 @@ export function activate(context: vscode.ExtensionContext) {
     }
 }
 
+// this method is called when your extension is deactivated
 export function deactivate() {}
