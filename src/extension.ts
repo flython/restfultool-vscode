@@ -113,82 +113,68 @@ class ApiTreeDataProvider implements vscode.TreeDataProvider<ApiEndpoint> {
         let className = '';
         let classMapping = '';
         let isController = false;
+        const endpointAnnotations: { annotation: string; lineNumber: number }[] = [];
 
-        // 首先检查类级别的注解
+        // 首先检查类级别的注解和收集端点注解
         for (let i = 0; i < lines.length; i++) {
             const line = lines[i].trim();
 
-            // 检查是否为Controller类
             if (line.includes('@Controller') || line.includes('@RestController')) {
                 isController = true;
-            }
-
-            // 获取类名
-            if (line.includes('class ')) {
+            } else if (line.includes('class ')) {
                 className = line.split('class ')[1].split(' ')[0];
-                break; // 找到类名后就可以停止这个循环
-            }
-
-            // 获取类级别的RequestMapping
-            if (line.includes('@RequestMapping')) {
+            } else if (line.includes('@RequestMapping') && !className) {
                 const match = line.match(/\"([^\"]+)\"/);
                 if (match) {
                     classMapping = match[1];
-                    // 确保类映射路径的格式正确
                     classMapping = classMapping.endsWith('/') ? classMapping.slice(0, -1) : classMapping;
                     classMapping = classMapping.startsWith('/') ? classMapping : '/' + classMapping;
                 }
+            } else {
+                const annotation = ['@GetMapping', '@PostMapping', '@PutMapping', '@DeleteMapping', '@PatchMapping', '@RequestMapping'].find(a => line.includes(a));
+                if (annotation) {
+                    endpointAnnotations.push({ annotation, lineNumber: i });
+                }
+            }
+
+            if (className && !isController) {
+                return; // 如果找到类名但不是Controller，直接返回
             }
         }
 
-        // 如果不是控制器类，直接返回
         if (!isController) {
-            return;
+            return; // 如果不是控制器类，直接返回
         }
 
-        // 然后处理方法级别的注解
-        for (let i = 0; i < lines.length; i++) {
-            const line = lines[i].trim();
-
-            // 检查端点映射
-            const mappingAnnotations = [
-                '@GetMapping',
-                '@PostMapping',
-                '@PutMapping',
-                '@DeleteMapping',
-                '@PatchMapping',
-                '@RequestMapping'
-            ];
-
-            for (const annotation of mappingAnnotations) {
-                if (line.includes(annotation)) {
-                    const methodMatch = lines.slice(i + 1).find(l => l.includes('public') || l.includes('private') || l.includes('protected'));
-                    if (methodMatch) {
-                        const methodName = methodMatch.match(/\s(\w+)\s*\(/)?.[1] || '';
-                        const pathMatch = line.match(/\"([^\"]+)\"/);
-                        let methodPath = pathMatch ? pathMatch[1] : '/';
-                        
-                        // 确保方法路径的格式正确
+        // 处理方法级别的注解
+        for (const { annotation, lineNumber } of endpointAnnotations) {
+            const line = lines[lineNumber].trim();
+            const methodMatch = lines.slice(lineNumber + 1).find(l => l.includes('public') || l.includes('private') || l.includes('protected'));
+            if (methodMatch) {
+                const methodName = methodMatch.match(/\s(\w+)\s*\(/)?.[1] || '';
+                const pathMatch = line.match(/\"([^\"]+)\"/);
+                let methodPath = pathMatch ? pathMatch[1] : '/';
+                
+                        methodPath = methodPath.startsWith('/') ? methodPath : '/' + methodPath;
                         methodPath = methodPath.startsWith('/') ? methodPath : '/' + methodPath;
                         
                         // 组合完整路径
-                        const fullPath = classMapping + methodPath;
+                methodPath = methodPath.startsWith('/') ? methodPath : '/' + methodPath;        
                         
-                        const method = this.getHttpMethod(annotation, line);
+                const fullPath = classMapping + methodPath;
+                        
+                const method = this.getHttpMethod(annotation, line);
 
-                        // 添加新的API端点
-                        this.endpoints.push({
-                            path: fullPath,
-                            method,
-                            location: new vscode.Location(
-                                vscode.Uri.file(filePath),
-                                new vscode.Position(i, 0)
-                            ),
-                            className,
-                            methodName
-                        });
-                    }
-                }
+                this.endpoints.push({
+                    path: fullPath,
+                    method,
+                    location: new vscode.Location(
+                        vscode.Uri.file(filePath),
+                        new vscode.Position(lineNumber, 0)
+                    ),
+                    className,
+                    methodName
+                });
             }
         }
     }
@@ -213,7 +199,7 @@ class ApiTreeDataProvider implements vscode.TreeDataProvider<ApiEndpoint> {
                 }
                 return 'GET';
             default:
-                return 'GET';
+                return '？';
         }
     }
 }
